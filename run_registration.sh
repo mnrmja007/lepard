@@ -46,8 +46,10 @@ else
     python generate_data_for_lepard.py -m $reg_mode -s $source_point_cloud_path -t $target_point_cloud_path -o $expt_dir
 
     # Copy the processed files to the required directory
-    echo "Please enter the base path of Lepard: "
-    read lepard_base
+    lepard_base=/home/gridraster/masters/lepard
+    echo "Lepard base path: $lepard_base"
+    # echo "Please enter the base path of Lepard: "
+    # read lepard_base
 
     data_dir_for_lepard=$lepard_base
     rigid=rigid
