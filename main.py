@@ -98,6 +98,9 @@ if __name__ == '__main__':
     train_set, val_set, test_set = get_datasets(config)
     config.train_loader, neighborhood_limits = get_dataloader(train_set,config,shuffle=True)
     config.val_loader, _ = get_dataloader(val_set, config, shuffle=False, neighborhood_limits=neighborhood_limits)
+    # config.coarse_level = 0
+    # config.kpfcn_config.coarse_level = 0
+    print("Config: ", config)
     config.test_loader, _ = get_dataloader(test_set, config, shuffle=False, neighborhood_limits=neighborhood_limits)
     
     # config.desc_loss = MetricLoss(config)

@@ -1,3 +1,7 @@
 *.pyc
 *.pth
 .idea
+results/*
+pretrained/*
+data/*
+snapshot/*

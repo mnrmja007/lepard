@@ -476,11 +476,18 @@ def collate_fn_4dmatch(list_data, config, neighborhood_limits ):
 
 
     # coarse infomation
+    # import pdb; pdb.set_trace()
     coarse_level = config.coarse_level
+    print("--------------\n [Dataloader]\n coarse_level = ", coarse_level)
+    print(f"input_batches_len: {input_batches_len}")
     pts_num_coarse = input_batches_len[coarse_level].view(-1, 2)
+    print(f"pts_num_coarse: {pts_num_coarse}")
     b_size = pts_num_coarse.shape[0]
     src_pts_max, tgt_pts_max = pts_num_coarse.amax(dim=0)
+    print(f"src_pts_max: {src_pts_max}, tgt_pts_max: {tgt_pts_max}")
+    print(f"input_points: {[t.shape for t in input_points]}")
     coarse_pcd = input_points[coarse_level] # .numpy()
+    print(f"coarse_pcd: {coarse_pcd.shape}")
     coarse_matches= []
     coarse_flow = []
     src_ind_coarse_split= [] # src_feats shape :[b_size * src_pts_max]

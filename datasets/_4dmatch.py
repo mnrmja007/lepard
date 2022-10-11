@@ -43,6 +43,7 @@ class _4DMatch(Dataset):
 
 
     def read_entries (self, split, data_root, d_slice=None, shuffle= False):
+
         entries = glob.glob(os.path.join(data_root, split, "*/*.npz"))
         if shuffle:
             random.shuffle(entries)

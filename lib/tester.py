@@ -5,6 +5,12 @@ from models.loss import MatchMotionLoss as MML
 import numpy as np
 from models.matching import Matching as CM
 import math
+import open3d as o3d
+import matplotlib.pyplot as plt
+import os
+import time
+from datetime import datetime
+
 
 class _3DMatchTester(Trainer):
     """
@@ -12,34 +18,40 @@ class _3DMatchTester(Trainer):
     """
     def __init__(self,args):
         Trainer.__init__(self, args)
-
+        expt_dir = time.strftime("%D_%H-%M", time.localtime(time.time())).replace('/','-')
+        self.results_dir = os.path.join(self.config.results_dir, expt_dir)
+        os.makedirs(self.results_dir)
+        self.log_file = open(os.path.join(self.results_dir, "3d_match_results.txt"), "w+")
 
     def test(self):
+        n = 10
 
-        n = 3
-
-        afmr = 0.
-        arr = 0
-        air = 0
+        # afmr = 0.
+        # arr = 0
+        # air = 0
 
         for i in range(n): # combat ransac nondeterministic
 
             thr =0.05
-            rr, ir, fmr = self.test_thr(thr)
-            afmr+=fmr
-            arr+=rr
-            air+=ir
-            print( "conf_threshold", thr, "registration recall:", rr, " Inlier rate:", ir, "FMR:", fmr)
+            self.test_thr(i, thr)
 
-        print("average registration recall:", arr / n, afmr/n, air/n)
+        self.log_file.close()
+            # rr, ir, fmr = self.test_thr(thr)
+        #     afmr+=fmr
+        #     arr+=rr
+        #     air+=ir
+        #     print( "conf_threshold", thr, "registration recall:", rr, " Inlier rate:", ir, "FMR:", fmr)
+
+        # print("average registration recall:", arr / n, afmr/n, air/n)
         # print ("registration recall:", self.test_thr())
 
-    def test_thr(self, conf_threshold=None):
-
+    def test_thr(self, iteration, conf_threshold=None):
+        self.log_file.write(f"\n===============================\n     Iteration: {iteration}   conf_threshold: {conf_threshold}\n=============================\n")
         # print('Start to evaluate on test datasets...')
         # os.makedirs(f'{self.snapshot_dir}/{self.config.dataset}',exist_ok=True)
 
         num_iter = math.ceil(len(self.loader['test'].dataset) // self.loader['test'].batch_size)
+        num_iter = 2
         c_loader_iter = self.loader['test'].__iter__()
 
 
@@ -57,7 +69,10 @@ class _3DMatchTester(Trainer):
 
                 ##################################
                 if self.timers: self.timers.tic('load batch')
-                inputs = c_loader_iter.next()
+                try:
+                    inputs = c_loader_iter.next()
+                except:
+                    return
                 for k, v in inputs.items():
                     if type(v) == list:
                         inputs[k] = [item.to(self.device) for item in v]
@@ -68,23 +83,40 @@ class _3DMatchTester(Trainer):
                 if self.timers: self.timers.toc('load batch')
                 ##################################
 
-
                 if self.timers: self.timers.tic('forward pass')
                 data = self.model(inputs, timers=self.timers)  # [N1, C1], [N2, C2]
                 if self.timers: self.timers.toc('forward pass')
 
+                print("Number of source points: ", data['s_pcd'].cpu().numpy().shape)
+                print("Number of target points: ", data['t_pcd'].cpu().numpy().shape)
+                self.log_file.write(f"Number of source points: {data['s_pcd'].cpu().numpy().shape}\n")
+                self.log_file.write(f"Number of target points: {data['t_pcd'].cpu().numpy().shape}\n")
 
 
-                match_pred, _, _ = CM.get_match(data['conf_matrix_pred'], thr=conf_threshold, mutual=False)
+                match_pred, masked_confidence_scores, mask = CM.get_match(data['conf_matrix_pred'], thr=conf_threshold, mutual=False)
+                conf_tmp = masked_confidence_scores.cpu().numpy()
+                print(f"Matching confidence:\n \t min = {np.min(conf_tmp)},\n \t max = {np.max(conf_tmp)},\n \t average = {np.mean(conf_tmp)},\n \t standard deviation = {np.std(conf_tmp)}")
+                self.log_file.write(f"\n\nMatching confidence:\n \t min = {np.min(conf_tmp)},\n \t max = {np.max(conf_tmp)},\n \t average = {np.mean(conf_tmp)},\n \t standard deviation = {np.std(conf_tmp)}\n\n")
+                mask_tmp = mask.cpu().numpy()
+                if len(mask_tmp.shape) == 3:
+                    assert mask_tmp.shape[0] == 1
+                    mask_tmp = mask_tmp[0]
+                plt.imshow(mask_tmp, cmap="seismic")
+                plt.grid()
+                plt.colorbar(label="Matching success (1) / failure (0)", orientation="horizontal")
+                plt.title("3DMatch Registration Mask")
+                plt.show()
+                # import pdb; pdb.set_trace()
                 rot, trn = MML.ransac_regist_coarse(data['s_pcd'], data['t_pcd'], data['src_mask'], data['tgt_mask'], match_pred)
+                print(f"Rotation matrix: {rot}\n Translation vector: {trn}")
+                self.log_file.write(f"Rotation matrix: {rot}\n Translation vector: {trn}\n")
+                # ir = MML.compute_inlier_ratio(match_pred, data, inlier_thr=0.1).mean()
 
-                ir = MML.compute_inlier_ratio(match_pred, data, inlier_thr=0.1).mean()
-
-                rr1 = MML.compute_registration_recall(rot, trn, data, thr=0.2) # 0.2m
+                # rr1 = MML.compute_registration_recall(rot, trn, data, thr=0.2) # 0.2m
 
 
 
-                vis = False
+                vis = True
                 if vis:
                     pcd = data['points'][0].cpu().numpy()
                     lenth = data['stack_lengths'][0][0]
@@ -95,31 +127,51 @@ class _3DMatchTester(Trainer):
                     c_pink = (224. / 255., 75. / 255., 232. / 255.)
                     c_blue = (0. / 255., 0. / 255., 255. / 255.)
                     scale_factor = 0.02
+                    # import pdb; pdb.set_trace()
                     # mlab.points3d(s_pc[ :, 0]  , s_pc[ :, 1],  s_pc[:,  2],  scale_factor=scale_factor , color=c_blue)
                     mlab.points3d(spcd[:, 0], spcd[:, 1], spcd[:, 2], scale_factor=scale_factor,
                                   color=c_red)
                     mlab.points3d(tpcd[:, 0], tpcd[:, 1], tpcd[:, 2], scale_factor=scale_factor,
                                   color=c_blue)
+                    mlab.title("Original source and target pclouds.")
                     mlab.show()
-
-                    spcd = ( np.matmul(rot, spcd.T) + trn ).T
-                    mlab.points3d(spcd[:, 0], spcd[:, 1], spcd[:, 2], scale_factor=scale_factor,
+                    reg_spcd = ( np.matmul(rot, spcd.T) + trn ).T
+                    mlab.points3d(reg_spcd[:, 0], reg_spcd[:, 1], reg_spcd[:, 2], scale_factor=scale_factor,
                                   color=c_red)
                     mlab.points3d(tpcd[:, 0], tpcd[:, 1], tpcd[:, 2], scale_factor=scale_factor,
                                   color=c_blue)
+                    mlab.title("Aligned source and target pclouds.")
                     mlab.show()
 
-                bs = len(rot)
-                assert  bs==1
-                success1 += bs * rr1
-                IR += bs*ir
-                FMR += (ir>0.05).float()
+                    # if iteration == 0:
+                    viz_pcd = o3d.geometry.PointCloud()
+                    viz_pcd.points = o3d.utility.Vector3dVector(spcd)
+                    viz_pcd.paint_uniform_color([255, 255, 0])
+                    o3d.io.write_point_cloud(os.path.join(self.results_dir, f"source_pc_iteration-{iteration}_confthresh-{conf_threshold}_sample-{idx}.ply"), viz_pcd, write_ascii=True)
+
+                    viz_pcd = o3d.geometry.PointCloud()
+                    viz_pcd.points = o3d.utility.Vector3dVector(tpcd)
+                    viz_pcd.paint_uniform_color([0, 255, 0])
+                    o3d.io.write_point_cloud(os.path.join(self.results_dir, f"target_pc_iteration-{iteration}_confthresh-{conf_threshold}_sample-{idx}.ply"), viz_pcd, write_ascii=True)
+
+                    viz_pcd = o3d.geometry.PointCloud()
+                    viz_pcd.points = o3d.utility.Vector3dVector(reg_spcd)
+                    viz_pcd.paint_uniform_color([0, 0, 255])
+                    o3d.io.write_point_cloud(os.path.join(self.results_dir, f"reg_output_3dmatch_iteration-{iteration}_confthresh-{conf_threshold}_sample-{idx}.ply"), viz_pcd, write_ascii=True)
+                    print(f"Registration output saved successfully in {self.results_dir}!!!")
+
+                # return
+            #     bs = len(rot)
+            #     assert  bs==1
+            #     success1 += bs * rr1
+            #     IR += bs*ir
+            #     FMR += (ir>0.05).float()
 
 
-            recall1 = success1/len(self.loader['test'].dataset)
-            IRate = IR/len(self.loader['test'].dataset)
-            FMR = FMR/len(self.loader['test'].dataset)
-            return recall1, IRate, FMR
+            # recall1 = success1/len(self.loader['test'].dataset)
+            # IRate = IR/len(self.loader['test'].dataset)
+            # FMR = FMR/len(self.loader['test'].dataset)
+            # return recall1, IRate, FMR
 
 
 def blend_anchor_motion (query_loc, reference_loc, reference_flow , knn=3, search_radius=0.1) :
@@ -209,24 +261,35 @@ def compute_nrfmr( match_pred, data, recall_thr=0.04):
 
 class _4DMatchTester(Trainer):
     """
-    3DMatch tester
+    4DMatch tester
     """
     def __init__(self,args):
         Trainer.__init__(self, args)
+        expt_dir = time.strftime("%D_%H-%M", time.localtime(time.time())).replace('/','-')
+        self.results_dir = os.path.join(self.config.results_dir, expt_dir)
+        os.makedirs(self.results_dir)
+        self.log_file = open(os.path.join(self.results_dir, "4d_match_results.txt"), "w+")
 
     def test(self):
 
-        for thr in [  0.05, 0.1, 0.2]:
+        for i, thr in enumerate([0.1]):
+        # for i, thr in enumerate([0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]):
         # for thr in [ 0.1 ]:
             import time
             start = time.time()
-            ir, fmr, nspl = self.test_thr(thr)
-            print( "conf_threshold", thr,  "NFMR:", fmr, " Inlier rate:", ir, "Number sample:", nspl)
-            print( "time costs:", time.time() - start)
+            self.test_thr(i, thr)
+            # ir, fmr, nspl = self.test_thr(thr)
+            # print( "conf_threshold", thr,  "NFMR:", fmr, " Inlier rate:", ir, "Number sample:", nspl)
+            # print( "time costs:", time.time() - start)
+        self.log_file.close()
 
-    def test_thr(self, conf_threshold=None):
+    def test_thr(self, iteration, conf_threshold=None):
+        self.log_file.write(f"\n===============================\n     Iteration: {iteration}   conf_threshold: {conf_threshold}\n=============================\n")
 
         num_iter = math.ceil(len(self.loader['test'].dataset) // self.loader['test'].batch_size)
+        print("Number of iterations: ", num_iter)
+        # import pdb;pdb.set_trace()
+        num_iter = 1
         c_loader_iter = self.loader['test'].__iter__()
 
 
@@ -249,7 +312,11 @@ class _4DMatchTester(Trainer):
 
                 ##################################
                 if self.timers: self.timers.tic('load batch')
-                inputs = c_loader_iter.next()
+                try:
+                    inputs = c_loader_iter.next()
+                except:
+                    return
+                #import pdb; pdb.set_trace()
                 for k, v in inputs.items():
                     if type(v) == list:
                         inputs[k] = [item.to(self.device) for item in v]
@@ -258,31 +325,114 @@ class _4DMatchTester(Trainer):
                     else:
                         inputs[k] = v.to(self.device)
                 if self.timers: self.timers.toc('load batch')
+                # import pdb; pdb.set_trace()
                 ##################################
 
 
+                #import pdb; pdb.set_trace()
+
                 if self.timers: self.timers.tic('forward pass')
                 data = self.model(inputs, timers=self.timers)  # [N1, C1], [N2, C2]
+
+
+
+                #import pdb; pdb.set_trace()
+                print("Number of source points: ", data['s_pcd'].cpu().numpy().shape)
+                print("Number of target points: ", data['t_pcd'].cpu().numpy().shape)
+                self.log_file.write(f"Number of source points: {data['s_pcd'].cpu().numpy().shape}\n")
+                self.log_file.write(f"Number of target points: {data['t_pcd'].cpu().numpy().shape}\n")
+
+
                 if self.timers: self.timers.toc('forward pass')
-
-                match_pred, _, _ = CM.get_match(data['conf_matrix_pred'], thr=conf_threshold, mutual=True)
-                ir = MML.compute_inlier_ratio(match_pred, data, inlier_thr=inlier_thr, s2t_flow=data['coarse_flow'][0][None] )[0]
-
-                nrfmr = compute_nrfmr(match_pred, data, recall_thr=recall_thr)
-
-                IR += ir
-                NR_FMR += nrfmr
-
-                n_sample += match_pred.shape[0]
+                print("Confidence threshold: ", conf_threshold)
+                self.log_file.write(f"\n\nConfidence threshold: {conf_threshold}\n")
+                match_pred, masked_confidence_scores, mask = CM.get_match(data['conf_matrix_pred'], thr=conf_threshold, mutual=True)
 
 
-            IRate = IR/len(self.loader['test'].dataset)
-            NR_FMR = NR_FMR/len(self.loader['test'].dataset)
-            n_sample = n_sample/len(self.loader['test'].dataset)
+                conf_tmp = masked_confidence_scores.cpu().numpy()
+                print(f"Matching confidence:\n \t min = {np.min(conf_tmp)},\n \t max = {np.max(conf_tmp)},\n \t average = {np.mean(conf_tmp)},\n \t standard deviation = {np.std(conf_tmp)}")
+                self.log_file.write(f"\n\nMatching confidence:\n \t min = {np.min(conf_tmp)},\n \t max = {np.max(conf_tmp)},\n \t average = {np.mean(conf_tmp)},\n \t standard deviation = {np.std(conf_tmp)}\n\n")
+                mask_tmp = mask.cpu().numpy()
+                if len(mask_tmp.shape) == 3:
+                    assert mask_tmp.shape[0] == 1
+                    mask_tmp = mask_tmp[0]
+                plt.imshow(mask_tmp, cmap="seismic")
+                plt.grid()
+                plt.colorbar(label="Matching success (1) / failure (0)", orientation="horizontal")
+                plt.title("4DMatch Registration Mask")
+                plt.show()
 
-            if self.timers: self.timers.print()
+                rot, trn = data["R_s2t_pred"].cpu().numpy(), data["t_s2t_pred"].cpu().numpy()
+                print(f"Rotation matrix: {rot}")
+                self.log_file.write(f"Rotation matrix: {rot}")
+                print("Translation matrix: ", trn)
+                self.log_file.write(f"Translation matrix: {trn}")
 
-            return IRate, NR_FMR, n_sample
+                vis = True
+                if vis:
+                    pcd = data['points'][0].cpu().numpy()
+                    lenth = data['stack_lengths'][0][0]
+                    spcd, tpcd = pcd[:lenth] , pcd[lenth:]
+
+                    import mayavi.mlab as mlab
+                    c_red = (224. / 255., 0 / 255., 125 / 255.)
+                    c_pink = (224. / 255., 75. / 255., 232. / 255.)
+                    c_blue = (0. / 255., 0. / 255., 255. / 255.)
+                    scale_factor = 0.02
+                    # mlab.points3d(s_pc[ :, 0]  , s_pc[ :, 1],  s_pc[:,  2],  scale_factor=scale_factor , color=c_blue)
+                    mlab.points3d(spcd[:, 0], spcd[:, 1], spcd[:, 2], scale_factor=scale_factor,
+                                  color=c_red)
+                    mlab.points3d(tpcd[:, 0], tpcd[:, 1], tpcd[:, 2], scale_factor=scale_factor,
+                                  color=c_blue)
+                    mlab.title("Original source and target pclouds.")
+                    mlab.show()
+
+                    # import pdb; pdb.set_trace()
+                    reg_spcd = ( np.matmul(rot, spcd.T) + trn ).T
+
+
+
+                    mlab.points3d(reg_spcd[:, 0], reg_spcd[:, 1], reg_spcd[:, 2], scale_factor=scale_factor,
+                                  color=c_red)
+                    mlab.points3d(tpcd[:, 0], tpcd[:, 1], tpcd[:, 2], scale_factor=scale_factor,
+                                  color=c_blue)
+                    mlab.title("Aligned source and target pclouds.")
+                    mlab.show()
+
+                    # if iter == 0:
+                    viz_pcd = o3d.geometry.PointCloud()
+                    viz_pcd.points = o3d.utility.Vector3dVector(spcd)
+                    viz_pcd.paint_uniform_color([255, 255, 0])
+                    o3d.io.write_point_cloud(os.path.join(self.results_dir, f"source_pc_iteration-{iteration}_confthresh-{conf_threshold}_sample-{idx}.ply"), viz_pcd, write_ascii=True)
+
+                    viz_pcd = o3d.geometry.PointCloud()
+                    viz_pcd.points = o3d.utility.Vector3dVector(tpcd)
+                    viz_pcd.paint_uniform_color([0, 255, 0])
+                    o3d.io.write_point_cloud(os.path.join(self.results_dir, f"target_pc_iteration-{iteration}_confthresh-{conf_threshold}_sample-{idx}.ply"), viz_pcd, write_ascii=True)
+
+                    viz_pcd = o3d.geometry.PointCloud()
+                    viz_pcd.points = o3d.utility.Vector3dVector(reg_spcd)
+                    viz_pcd.paint_uniform_color([0, 0, 255])
+                    o3d.io.write_point_cloud(os.path.join(self.results_dir, f"reg_output_4dmatch_iteration-{iteration}_confthresh-{conf_threshold}_sample-{idx}.ply"), viz_pcd, write_ascii=True)
+                    print(f"Registration output saved successfully in {self.results_dir}!!!")
+
+            #     ir = MML.compute_inlier_ratio(match_pred, data, inlier_thr=inlier_thr, s2t_flow=data['coarse_flow'][0][None] )[0]
+
+            #     nrfmr = compute_nrfmr(match_pred, data, recall_thr=recall_thr)
+
+            #     IR += ir
+            #     NR_FMR += nrfmr
+
+            #     n_sample += match_pred.shape[0]
+
+
+            # IRate = IR/len(self.loader['test'].dataset)
+            # NR_FMR = NR_FMR/len(self.loader['test'].dataset)
+            # n_sample = n_sample/len(self.loader['test'].dataset)
+
+            # if self.timers: self.timers.print()
+
+            # return IRate, NR_FMR, n_sample
 
 
 

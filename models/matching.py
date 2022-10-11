@@ -71,17 +71,23 @@ class Matching(nn.Module):
     @staticmethod
     @torch.no_grad()
     def get_match( conf_matrix, thr, mutual=True):
-
+        # import pdb; pdb.set_trace()
+        import numpy as np
         mask = conf_matrix > thr
-
+        mask_tmp = mask.cpu().numpy()
+        print("Fraction of elements retained in the conf matrix: ", (np.sum(mask_tmp) / np.size(mask_tmp)))
         #mutual nearest
         if mutual:
             mask = mask \
                    * (conf_matrix == conf_matrix.max(dim=2, keepdim=True)[0]) \
                    * (conf_matrix == conf_matrix.max(dim=1, keepdim=True)[0])
-
+        mask_tmp = mask.cpu().numpy()
+        print("Fraction of elements retained in the conf matrix: ", (np.sum(mask_tmp) / np.size(mask_tmp)))
+        print("Max number of points that a source point got matched to: ", np.max(np.sum(mask_tmp, axis=2)))
+        print("Max number of points that a target point got matched to: ", np.max(np.sum(mask_tmp, axis=1)))
         #find all valid coarse matches
         index = (mask==True).nonzero()
+        print("Index: ", index.cpu().numpy().shape)
         b_ind, src_ind, tgt_ind = index[:,0], index[:,1], index[:,2]
         mconf = conf_matrix[b_ind, src_ind, tgt_ind]
 
