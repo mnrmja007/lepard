@@ -89,6 +89,8 @@ class PointCloudWhole(PointCloud):
         if not np.all([isinstance(x, PointCloud) for x in point_cloud_parts]):
             raise ValueError("point_cloud_parts must be a list of PointCloud objects.")
         self.parts = point_cloud_parts
+        all_points = np.concatenate([part.points for part in self.parts], axis=0)
+        super(PointCloudWhole).__init__(self, all_points)
         self.connected_component_distance_threshold = connected_component_distance_threshold
         self.graph = nx.Graph()
         self.graph.add_nodes_from(
@@ -103,4 +105,6 @@ class PointCloudWhole(PointCloud):
                         i, j,
                         length=edge_length,
                         direction=direction)
+    def visualize(self, color=[255, 0, 0]):
+        pass
         
